@@ -47,6 +47,22 @@ class Item(Base):
     accounts: Mapped[list["Account"]] = relationship(back_populates="item")
 
 
+class AccountExclusion(Base):
+    """A provider account that was deleted and must not be imported again."""
+
+    __tablename__ = "account_exclusions"
+    __table_args__ = (
+        UniqueConstraint("provider", "provider_account_id", name="uq_account_exclusions"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    provider: Mapped[str] = mapped_column(String(32), nullable=False)
+    provider_account_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
 class Account(Base):
     __tablename__ = "accounts"
     __table_args__ = (
@@ -69,6 +85,8 @@ class Account(Base):
     available_balance: Mapped[Decimal | None] = mapped_column(Money)
     current_balance: Mapped[Decimal | None] = mapped_column(Money)
     limit_amount: Mapped[Decimal | None] = mapped_column(Money)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="open", server_default="open")
+    closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )

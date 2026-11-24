@@ -27,7 +27,7 @@ def list_balances(
     return [
         account
         for account in list_accounts(session, item_id=item_id)
-        if account_id is None or account.id == account_id
+        if account.status == "open" and (account_id is None or account.id == account_id)
     ]
 
 
@@ -41,6 +41,14 @@ def list_balance_history(
         .limit(limit)
     )
     return list(session.scalars(stmt).all())
+
+
+def _open_account_ids():
+    return select(Account.id).where(Account.status == "open")
+
+
+def _open_only(stmt: Select, account_column) -> Select:
+    return stmt.where(account_column.in_(_open_account_ids()))
 
 
 def _apply_account_scope(
@@ -71,6 +79,8 @@ def query_transactions(
     count_stmt = select(func.count()).select_from(CashTransaction)
     stmt = _apply_account_scope(stmt, account_id, item_id, CashTransaction.account_id)
     count_stmt = _apply_account_scope(count_stmt, account_id, item_id, CashTransaction.account_id)
+    stmt = _open_only(stmt, CashTransaction.account_id)
+    count_stmt = _open_only(count_stmt, CashTransaction.account_id)
     if start:
         stmt = stmt.where(CashTransaction.posted_on >= start)
         count_stmt = count_stmt.where(CashTransaction.posted_on >= start)
@@ -126,6 +136,7 @@ def query_holdings(
         selectinload(Holding.security),
     )
     stmt = _apply_account_scope(stmt, account_id, item_id, Holding.account_id)
+    stmt = _open_only(stmt, Holding.account_id)
     return list(session.scalars(stmt.order_by(Holding.institution_value.desc())).all())
 
 
@@ -148,6 +159,8 @@ def query_investment_transactions(
     count_stmt = _apply_account_scope(
         count_stmt, account_id, item_id, InvestmentTransaction.account_id
     )
+    stmt = _open_only(stmt, InvestmentTransaction.account_id)
+    count_stmt = _open_only(count_stmt, InvestmentTransaction.account_id)
     if start:
         stmt = stmt.where(InvestmentTransaction.posted_on >= start)
         count_stmt = count_stmt.where(InvestmentTransaction.posted_on >= start)
@@ -168,7 +181,7 @@ def query_investment_transactions(
 
 
 def summarize(session: Session, item_id: str | None = None) -> dict:
-    accounts = list_accounts(session, item_id=item_id)
+    accounts = [account for account in list_accounts(session, item_id=item_id) if account.status == "open"]
     holdings = query_holdings(session, item_id=item_id)
     holding_by_account: dict[str, Decimal] = {}
     investments = Decimal("0")
@@ -192,10 +205,13 @@ def summarize(session: Session, item_id: str | None = None) -> dict:
             cash += current
 
     tx_count = session.scalar(
-        _apply_account_scope(
-            select(func.count()).select_from(CashTransaction),
-            None,
-            item_id,
+        _open_only(
+            _apply_account_scope(
+                select(func.count()).select_from(CashTransaction),
+                None,
+                item_id,
+                CashTransaction.account_id,
+            ),
             CashTransaction.account_id,
         )
     )

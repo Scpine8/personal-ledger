@@ -79,10 +79,11 @@
     button.secondary { background: transparent; color: var(--ink); border: 1px solid var(--line); }
     button:disabled { opacity: 0.6; cursor: wait; }
     #status { min-height: 1.4em; color: var(--muted); }
+    #status.bad { color: var(--out); }
     .toolbar { margin: 18px 0 8px; }
     #hint { margin: 0 0 18px; color: var(--muted); font-size: 0.92rem; max-width: 62ch; }
-    .accounts { overflow-x: auto; }
-    table { width: 100%; border-collapse: collapse; overflow: hidden; }
+    .accounts { overflow: visible; }
+    table { width: 100%; border-collapse: collapse; }
     th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--line); vertical-align: middle; }
     th { color: var(--muted); font-size: 0.8rem; font-weight: 600; }
     td.num, th.num { text-align: right; }
@@ -103,6 +104,57 @@
     .bad { color: var(--out); }
     .health { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
     .empty { color: var(--muted); }
+    .loader {
+      display: inline-block;
+      width: 16px;
+      height: 16px;
+      border: 2px solid var(--line);
+      border-top-color: var(--ink);
+      border-radius: 50%;
+      vertical-align: middle;
+      animation: spin 0.7s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .menu { position: relative; display: inline-block; }
+    .menu-list {
+      position: fixed;
+      z-index: 4;
+      min-width: 9rem;
+      padding: 6px;
+      display: grid;
+      gap: 4px;
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+    }
+    .menu-list button {
+      width: 100%;
+      text-align: left;
+      background: transparent;
+      color: var(--ink);
+      border: 0;
+    }
+    .menu-list[hidden] { display: none; }
+    .menu-list button:hover { background: var(--paper); }
+    .modal-backdrop {
+      position: fixed;
+      inset: 0;
+      z-index: 5;
+      display: grid;
+      place-items: center;
+      background: rgba(28, 25, 21, 0.35);
+    }
+    .modal-backdrop[hidden] { display: none; }
+    .modal {
+      width: min(420px, calc(100% - 32px));
+      padding: 18px;
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+    }
+    .modal h2 { margin: 0 0 8px; font-size: 1.2rem; }
+    .modal p { margin: 0 0 16px; color: var(--muted); }
+    .modal-actions { display: flex; justify-content: flex-end; gap: 8px; }
     @media (max-width: 720px) {
       header { flex-direction: column; align-items: stretch; }
     }
@@ -134,6 +186,16 @@
 
     <div id="accounts" class="accounts"></div>
   </main>
+  <div id="confirm-modal" class="modal-backdrop" hidden>
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="confirm-title">
+      <h2 id="confirm-title"></h2>
+      <p id="confirm-body"></p>
+      <div class="modal-actions">
+        <button id="confirm-cancel" class="secondary" type="button">Cancel</button>
+        <button id="confirm-ok" type="button">Confirm</button>
+      </div>
+    </div>
+  </div>
 
   <script src="https://cdn.plaid.com/link/v2/stable/link-initialize.js"></script>
   <script>
@@ -144,6 +206,11 @@
     const hintEl = document.querySelector("#hint");
     const connectBtn = document.querySelector("#connect");
     const accountsEl = document.querySelector("#accounts");
+    const confirmModal = document.querySelector("#confirm-modal");
+    const confirmTitle = document.querySelector("#confirm-title");
+    const confirmBody = document.querySelector("#confirm-body");
+    const confirmOk = document.querySelector("#confirm-ok");
+    const confirmCancel = document.querySelector("#confirm-cancel");
 
     const KEY = "ledger.apiKey";
     const USER = "ledger.clientUserId";
@@ -152,8 +219,27 @@
     let sortKey = null;
     let sortDir = 1;
 
-    function setStatus(message) {
+    function setStatus(message, isError) {
       statusEl.textContent = message;
+      statusEl.classList.toggle("bad", Boolean(isError));
+    }
+
+    function rowLoader() {
+      const loader = document.createElement("span");
+      loader.className = "loader";
+      loader.setAttribute("role", "status");
+      loader.setAttribute("aria-label", "Working");
+      return loader;
+    }
+
+    async function withRowLoader(cell, account, work) {
+      cell.replaceChildren(rowLoader());
+      try {
+        await work();
+      } catch (err) {
+        setStatus(err && err.message ? err.message : "Request failed", true);
+        if (cell.isConnected) cell.replaceChildren(actionMenu(account, cell));
+      }
     }
 
     function money(value, currency) {
@@ -270,7 +356,7 @@
       connectionHeader.textContent = "Connection";
       const actionHeader = document.createElement("th");
       actionHeader.className = "action";
-      actionHeader.textContent = "";
+      actionHeader.textContent = "Actions";
       head.append(
         nameHeader,
         sortHeader("Type", "type", false),
@@ -296,14 +382,15 @@
         const connection = document.createElement("td");
         const health = document.createElement("div");
         health.className = "health";
+        const closed = account.status === "closed";
         const label = document.createElement("span");
-        label.textContent = account.connection_label || "Connected";
-        if (account.connection_action && account.connection_action !== "none") {
+        label.textContent = closed ? "Closed" : (account.connection_label || "Connected");
+        if (!closed && account.connection_action && account.connection_action !== "none") {
           label.className = "bad";
         }
         if (account.connection_detail) health.title = account.connection_detail;
         health.appendChild(label);
-        if (account.connection_action === "update" || account.connection_action === "connect") {
+        if (!closed && (account.connection_action === "update" || account.connection_action === "connect")) {
           const repair = document.createElement("button");
           repair.type = "button";
           repair.className = "secondary";
@@ -314,12 +401,7 @@
         connection.appendChild(health);
         const action = document.createElement("td");
         action.className = "action";
-        const button = document.createElement("button");
-        button.type = "button";
-        button.className = "secondary";
-        button.textContent = "Sync";
-        button.addEventListener("click", () => syncItem(account.item_id, account.name, button));
-        action.appendChild(button);
+        action.appendChild(actionMenu(account, action));
         row.append(name, type, balance, synced, connection, action);
         tbody.appendChild(row);
       }
@@ -335,6 +417,98 @@
       accountsEl.replaceChildren(tools, table);
     }
 
+    function actionMenu(account, cell) {
+      const closed = account.status === "closed";
+      const menu = document.createElement("div");
+      menu.className = "menu";
+      const toggle = document.createElement("button");
+      toggle.type = "button";
+      toggle.className = "secondary";
+      toggle.textContent = "Actions";
+      const list = document.createElement("div");
+      list.className = "menu-list";
+      list.hidden = true;
+      function item(label, disabled, onClick) {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.textContent = label;
+        button.disabled = disabled;
+        button.addEventListener("click", () => {
+          list.hidden = true;
+          onClick();
+        });
+        list.appendChild(button);
+      }
+      item("Sync", closed, () => syncItem(account, cell));
+      item("Close", closed, () => closeAccount(account, cell));
+      item("Delete", false, () => deleteAccount(account, cell));
+      toggle.addEventListener("click", (event) => {
+        event.stopPropagation();
+        const willOpen = list.hidden;
+        document.querySelectorAll(".menu-list").forEach((open) => { open.hidden = true; });
+        if (!willOpen) return;
+        list.hidden = false;
+        const rect = toggle.getBoundingClientRect();
+        const height = list.offsetHeight;
+        const width = list.offsetWidth;
+        let top = rect.bottom + 4;
+        if (top + height > window.innerHeight - 8 && rect.top > height + 8) {
+          top = rect.top - height - 4;
+        }
+        let left = rect.right - width;
+        left = Math.max(8, Math.min(left, window.innerWidth - width - 8));
+        list.style.top = top + "px";
+        list.style.left = left + "px";
+      });
+      list.addEventListener("click", (event) => event.stopPropagation());
+      menu.append(toggle, list);
+      return menu;
+    }
+
+    function askConfirm(title, body) {
+      return new Promise((resolve) => {
+        confirmTitle.textContent = title;
+        confirmBody.textContent = body;
+        confirmModal.hidden = false;
+        function finish(accepted) {
+          confirmModal.hidden = true;
+          confirmOk.removeEventListener("click", onOk);
+          confirmCancel.removeEventListener("click", onCancel);
+          resolve(accepted);
+        }
+        function onOk() { finish(true); }
+        function onCancel() { finish(false); }
+        confirmOk.addEventListener("click", onOk);
+        confirmCancel.addEventListener("click", onCancel);
+      });
+    }
+
+    async function closeAccount(account, cell) {
+      const accepted = await askConfirm(
+        "Close " + account.name + "?",
+        "The account stays in the ledger. New activity will not be fetched, and its balance will leave net worth."
+      );
+      if (!accepted) return;
+      await withRowLoader(cell, account, async () => {
+        await api("/v1/accounts/" + encodeURIComponent(account.id) + "/close", { method: "POST" });
+        setStatus(account.name + " closed.");
+        await refresh();
+      });
+    }
+
+    async function deleteAccount(account, cell) {
+      const accepted = await askConfirm(
+        "Delete " + account.name + "?",
+        "This removes the account and its transactions, balances, and holdings. This cannot be undone."
+      );
+      if (!accepted) return;
+      await withRowLoader(cell, account, async () => {
+        await api("/v1/accounts/" + encodeURIComponent(account.id), { method: "DELETE" });
+        setStatus(account.name + " deleted.");
+        await refresh();
+      });
+    }
+
     async function refresh() {
       try {
         await api("/v1/items/health", { method: "POST" });
@@ -348,7 +522,12 @@
     async function syncAllItems(button) {
       const ids = [];
       for (const account of accounts) {
+        if (account.status === "closed") continue;
         if (!ids.includes(account.item_id)) ids.push(account.item_id);
+      }
+      if (!ids.length) {
+        setStatus("No open accounts to sync.");
+        return;
       }
       button.disabled = true;
       setStatus("Syncing " + ids.length + (ids.length === 1 ? " institution…" : " institutions…"));
@@ -359,7 +538,7 @@
         setStatus("All accounts synced.");
         await refresh();
       } catch (err) {
-        setStatus(err.message);
+        setStatus(err.message, true);
         button.disabled = false;
       }
     }
@@ -396,22 +575,17 @@
         setStatus(account.name + " reconnected.");
         await refresh();
       } catch (err) {
-        setStatus(err.message);
+        setStatus(err.message, true);
         button.disabled = false;
       }
     }
 
-    async function syncItem(id, name, button) {
-      button.disabled = true;
-      setStatus("Syncing " + name + "…");
-      try {
-        await api("/v1/items/" + encodeURIComponent(id) + "/sync", { method: "POST" });
-        setStatus(name + " synced.");
+    async function syncItem(account, cell) {
+      await withRowLoader(cell, account, async () => {
+        await api("/v1/items/" + encodeURIComponent(account.item_id) + "/sync", { method: "POST" });
+        setStatus(account.name + " synced.");
         await refresh();
-      } catch (err) {
-        setStatus(err.message);
-        button.disabled = false;
-      }
+      });
     }
 
     function openLink(linkToken) {
@@ -473,7 +647,7 @@
         setStatus(name + " connected.");
         await refresh();
       } catch (err) {
-        setStatus(err.message);
+        setStatus(err.message, true);
       } finally {
         connectBtn.disabled = false;
       }
@@ -487,10 +661,19 @@
         await refresh();
         setStatus("Key saved in this browser tab.");
       } catch (err) {
-        setStatus(err.message);
+        setStatus(err.message, true);
       }
     });
     connectBtn.addEventListener("click", connect);
+    document.addEventListener("click", () => {
+      document.querySelectorAll(".menu-list").forEach((menu) => { menu.hidden = true; });
+    });
+    window.addEventListener("resize", () => {
+      document.querySelectorAll(".menu-list").forEach((menu) => { menu.hidden = true; });
+    });
+    window.addEventListener("scroll", () => {
+      document.querySelectorAll(".menu-list").forEach((menu) => { menu.hidden = true; });
+    }, true);
 
     const saved = sessionStorage.getItem(KEY);
     if (saved) keyInput.value = saved;

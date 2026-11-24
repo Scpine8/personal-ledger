@@ -26,6 +26,9 @@ class MockProvider:
 
     name = "mock"
 
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+
     def create_link_token(self, client_user_id: str, access_token: str | None = None) -> LinkToken:
         kind = "update" if access_token else "link"
         return LinkToken(
@@ -36,6 +39,9 @@ class MockProvider:
 
     def get_connection(self, access_token: str) -> ConnectionState:
         return ConnectionState(status="active", error=None)
+
+    def remove_item(self, access_token: str) -> None:
+        self.calls.append("remove_item")
 
     def exchange_public_token(self, public_token: str) -> ItemCredentials:
         suffix = uuid.uuid4().hex[:10]
@@ -48,6 +54,7 @@ class MockProvider:
         return Institution(institution_id="ins_mock_platypus", name="First Platypus Bank")
 
     def get_accounts(self, access_token: str) -> list[AccountSnapshot]:
+        self.calls.append("get_accounts")
         prefix = _prefix(access_token)
         return [
             AccountSnapshot(

@@ -2,7 +2,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
-from ledger.api.routes import connect, health, items, query, ui, webhooks
+from ledger.api.routes import accounts, connect, health, items, query, ui, webhooks
 from ledger.db.engine import init_db
 
 
@@ -26,6 +26,7 @@ def create_app() -> FastAPI:
     application.include_router(connect.router)
     application.include_router(items.router)
     application.include_router(query.router)
+    application.include_router(accounts.router)
     application.include_router(webhooks.router)
     application.include_router(ui.router)
     return application

@@ -160,3 +160,69 @@ def test_item_error_webhook_marks_accounts_for_reconnect(api, auth):
     assert health.json()[0]["status"] == "active"
     accounts = api.get("/v1/accounts", headers=auth).json()
     assert accounts[0]["connection_label"] == "Connected"
+
+
+def test_delete_account_is_not_recreated_or_counted(api, auth):
+    _connect(api, auth)
+    checking = next(row for row in api.get("/v1/accounts", headers=auth).json() if row["subtype"] == "checking")
+    before = api.get("/v1/transactions?limit=50", headers=auth).json()["total"]
+    deleted = api.delete(f"/v1/accounts/{checking['id']}", headers=auth)
+    assert deleted.status_code == 204
+    subtypes = {row["subtype"] for row in api.get("/v1/accounts", headers=auth).json()}
+    assert "checking" not in subtypes
+    assert api.get("/v1/transactions?limit=50", headers=auth).json()["total"] < before
+
+    synced = api.post(f"/v1/items/{checking['item_id']}/sync", headers=auth)
+    assert synced.status_code == 200
+    subtypes = {row["subtype"] for row in api.get("/v1/accounts", headers=auth).json()}
+    assert "checking" not in subtypes
+    assert api.get("/v1/summary", headers=auth).json()["cash"] == 0
+
+
+def test_close_keeps_rows_and_ignores_balance(api, auth):
+    from decimal import Decimal
+
+    from sqlalchemy import func, select
+
+    from ledger.db.engine import session_scope
+    from ledger.db.models import Account, CashTransaction
+
+    _connect(api, auth)
+    checking = next(row for row in api.get("/v1/accounts", headers=auth).json() if row["subtype"] == "checking")
+    with session_scope() as session:
+        row = session.get(Account, checking["id"])
+        row.current_balance = Decimal("1")
+
+    closed = api.post(f"/v1/accounts/{checking['id']}/close", headers=auth)
+    assert closed.status_code == 200
+    assert closed.json()["status"] == "closed"
+
+    synced = api.post(f"/v1/items/{checking['item_id']}/sync", headers=auth)
+    assert synced.status_code == 200
+    again = next(row for row in api.get("/v1/accounts", headers=auth).json() if row["id"] == checking["id"])
+    assert again["status"] == "closed"
+    assert again["current_balance"] == 1
+    assert api.get("/v1/summary", headers=auth).json()["cash"] == 0
+    with session_scope() as session:
+        kept = session.scalar(
+            select(func.count()).select_from(CashTransaction).where(CashTransaction.account_id == checking["id"])
+        )
+    assert kept > 0
+
+
+def test_closing_the_last_account_stops_provider_sync(api, auth):
+    from ledger.providers.factory import get_provider
+
+    connected = _connect(api, auth)
+    finance = get_provider()
+    for row in api.get("/v1/accounts", headers=auth).json():
+        response = api.post(f"/v1/accounts/{row['id']}/close", headers=auth)
+        assert response.status_code == 200
+    item = api.get(f"/v1/items/{connected['item']['id']}", headers=auth)
+    assert item.status_code == 200
+    assert item.json()["status"] == "closed"
+    assert "remove_item" in finance.calls
+    finance.calls.clear()
+    synced = api.post(f"/v1/items/{connected['item']['id']}/sync", headers=auth)
+    assert synced.status_code == 200
+    assert "get_accounts" not in finance.calls

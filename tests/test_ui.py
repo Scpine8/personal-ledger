@@ -12,6 +12,9 @@ def test_home_page_is_the_connect_ui(api):
     body = response.text
     assert "Connect institution" in body
     assert "Sync all" in body
+    assert "Actions" in body
+    assert ".loader" in body
+    assert "confirm-modal" in body
     assert "Last synced" in body
     assert "Reconnect" in body
     assert "Recent transactions" not in body

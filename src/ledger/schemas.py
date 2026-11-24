@@ -82,6 +82,7 @@ class AccountOut(BaseModel):
     connection_label: str = "Connected"
     connection_action: str = "none"
     connection_detail: str | None = None
+    status: str = "open"
 
     @classmethod
     def from_row(cls, account) -> "AccountOut":
@@ -109,6 +110,7 @@ class AccountOut(BaseModel):
             connection_label=label,
             connection_action=action,
             connection_detail=item.error if item else None,
+            status=account.status,
         )
 
 

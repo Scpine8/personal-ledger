@@ -84,6 +84,8 @@ def refresh_connections(session: Session, provider: FinanceProvider) -> list[Ite
     items = list_items(session)
     now = datetime.now(UTC)
     for item in items:
+        if item.status == "closed" or not item.access_token:
+            continue
         try:
             state = provider.get_connection(item.access_token)
         except Exception as exc:  # noqa: BLE001 — keep the row, record the failure

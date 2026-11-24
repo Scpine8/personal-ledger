@@ -2,7 +2,7 @@ from collections.abc import Generator
 from contextlib import contextmanager
 from pathlib import Path
 
-from sqlalchemy import create_engine, event, text
+from sqlalchemy import create_engine, event, inspect, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -80,9 +80,31 @@ def reset_engine() -> None:
     _SessionLocal = None
 
 
+def _ensure_account_columns(engine: Engine) -> None:
+    """create_all does not add columns to a table that already exists."""
+    inspector = inspect(engine)
+    if not inspector.has_table("accounts"):
+        return
+    names = {column["name"] for column in inspector.get_columns("accounts")}
+    closed_type = "TIMESTAMP WITH TIME ZONE" if engine.dialect.name == "postgresql" else "DATETIME"
+    statements = []
+    if "status" not in names:
+        statements.append(
+            "ALTER TABLE accounts ADD COLUMN status VARCHAR(32) NOT NULL DEFAULT 'open'"
+        )
+    if "closed_at" not in names:
+        statements.append(f"ALTER TABLE accounts ADD COLUMN closed_at {closed_type}")
+    if not statements:
+        return
+    with engine.begin() as connection:
+        for statement in statements:
+            connection.execute(text(statement))
+
+
 def init_db() -> None:
     engine = get_engine()
     Base.metadata.create_all(engine)
+    _ensure_account_columns(engine)
     if engine.dialect.name == "sqlite":
         with engine.connect() as conn:
             conn.execute(text("PRAGMA journal_mode=WAL"))

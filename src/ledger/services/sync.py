@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from ledger.db.models import (
     Account,
+    AccountExclusion,
     BalanceSnapshot,
     CashTransaction,
     Holding,
@@ -32,6 +33,9 @@ class SyncResult:
 
 
 def sync_item(session: Session, provider: FinanceProvider, item: Item) -> SyncResult:
+    if item.status == "closed" or not item.access_token:
+        return SyncResult(item.id, 0, 0, 0, 0, 0)
+
     accounts = provider.get_accounts(item.access_token)
     account_map = _upsert_accounts(session, item, accounts)
     session.flush()
@@ -59,13 +63,24 @@ def _upsert_accounts(
 ) -> dict[str, Account]:
     now = datetime.now(UTC)
     mapping: dict[str, Account] = {}
+    excluded = set(
+        session.scalars(
+            select(AccountExclusion.provider_account_id).where(
+                AccountExclusion.provider == item.provider
+            )
+        ).all()
+    )
     for snapshot in accounts:
+        if snapshot.account_id in excluded:
+            continue
         existing = get_by(
             session,
             Account,
             provider=item.provider,
             provider_account_id=snapshot.account_id,
         )
+        if existing is not None and existing.status == "closed":
+            continue
         values = {
             "item_id": item.id,
             "name": snapshot.name,
@@ -129,7 +144,7 @@ def _sync_cash_transactions(
                 provider=item.provider,
                 provider_transaction_id=gone.transaction_id,
             )
-            if row is not None:
+            if row is not None and row.account.status != "closed":
                 session.delete(row)
                 removed += 1
         cursor = delta.next_cursor or cursor
@@ -148,7 +163,7 @@ def _write_cash_txn(
     account = account_map.get(txn.account_id) or get_by(
         session, Account, provider=provider, provider_account_id=txn.account_id
     )
-    if account is None:
+    if account is None or account.status == "closed":
         return False
     now = datetime.now(UTC)
     upsert(
@@ -261,7 +276,7 @@ def _write_investment_txn(
     account = account_map.get(txn.account_id) or get_by(
         session, Account, provider=provider, provider_account_id=txn.account_id
     )
-    if account is None:
+    if account is None or account.status == "closed":
         return False
     security = security_map.get(txn.security_id) if txn.security_id else None
     now = datetime.now(UTC)

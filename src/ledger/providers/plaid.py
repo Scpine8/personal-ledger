@@ -16,6 +16,7 @@ from plaid.model.investments_transactions_get_request_options import (
 )
 from plaid.model.item_get_request import ItemGetRequest
 from plaid.model.item_public_token_exchange_request import ItemPublicTokenExchangeRequest
+from plaid.model.item_remove_request import ItemRemoveRequest
 from plaid.model.link_token_create_request import LinkTokenCreateRequest
 from plaid.model.link_token_create_request_user import LinkTokenCreateRequestUser
 from plaid.model.products import Products
@@ -126,6 +127,14 @@ class PlaidProvider:
         if not error:
             return ConnectionState(status="active", error=None)
         return ConnectionState(status="error", error=_plaid_error_text(error))
+
+    def remove_item(self, access_token: str) -> None:
+        if not access_token:
+            return
+        try:
+            self._client.item_remove(ItemRemoveRequest(access_token=access_token))
+        except ApiException:
+            return
 
     def exchange_public_token(self, public_token: str) -> ItemCredentials:
         response = _as_dict(
