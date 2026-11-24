@@ -1,3 +1,10 @@
+def test_vercel_entrypoint_exports_the_ledger_app():
+    import app as entry
+    from ledger.api.app import app as application
+
+    assert entry.app is application
+
+
 def test_home_page_is_the_connect_ui(api):
     response = api.get("/")
     assert response.status_code == 200
