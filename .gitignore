@@ -9,6 +9,9 @@ dist/
 build/
 
 .env
+.env.local
+.env*.local
+.vercel/
 data/*.sqlite
 data/*.sqlite-*
 .DS_Store

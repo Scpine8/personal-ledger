@@ -1,0 +1,464 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Personal Ledger</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #1c1915;
+      --muted: #5c564c;
+      --line: #e4ddd0;
+      --paper: #f6f3ec;
+      --card: #fffdf8;
+      --green: #1d6b45;
+      --green-ink: #f4fff8;
+      --out: #8d3b2a;
+      --in: #1d6b45;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Avenir Next", "Segoe UI", sans-serif;
+      color: var(--ink);
+      background: var(--paper);
+    }
+    main {
+      max-width: 920px;
+      margin: 0 auto;
+      padding: 32px 20px 64px;
+    }
+    header {
+      display: flex;
+      justify-content: space-between;
+      gap: 16px;
+      align-items: flex-end;
+      margin-bottom: 24px;
+    }
+    h1, h2 { font-family: Palatino, "Iowan Old Style", Georgia, serif; font-weight: 600; }
+    h1 { margin: 0; font-size: 2rem; }
+    h2 { margin: 0 0 12px; font-size: 1.25rem; }
+    .eyebrow { margin: 0 0 4px; letter-spacing: 0.08em; text-transform: uppercase; font-size: 0.75rem; color: var(--muted); }
+    .badge {
+      margin: 0;
+      padding: 6px 10px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: var(--card);
+      color: var(--muted);
+      font-size: 0.85rem;
+    }
+    form, .panel, .card, table {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+    }
+    form {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      align-items: end;
+      padding: 14px;
+      margin-bottom: 12px;
+    }
+    label { display: block; font-size: 0.8rem; color: var(--muted); margin-bottom: 4px; }
+    input {
+      min-width: 220px;
+      padding: 8px 10px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      font: inherit;
+    }
+    button {
+      font: inherit;
+      border: 0;
+      border-radius: 8px;
+      padding: 9px 14px;
+      background: var(--green);
+      color: var(--green-ink);
+      cursor: pointer;
+    }
+    button.secondary { background: transparent; color: var(--ink); border: 1px solid var(--line); }
+    button:disabled { opacity: 0.6; cursor: wait; }
+    #status { min-height: 1.4em; color: var(--muted); }
+    .toolbar { margin: 18px 0 8px; }
+    #hint { margin: 0 0 18px; color: var(--muted); font-size: 0.92rem; max-width: 62ch; }
+    .summary { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 28px; }
+    .card { padding: 14px; }
+    .card span { display: block; color: var(--muted); font-size: 0.8rem; }
+    .card strong { display: block; margin-top: 6px; font-size: 1.25rem; font-variant-numeric: tabular-nums; }
+    .list { display: grid; gap: 10px; }
+    .item { display: flex; justify-content: space-between; gap: 12px; align-items: center; padding: 14px; }
+    .item p { margin: 4px 0 0; color: var(--muted); font-size: 0.9rem; }
+    table { width: 100%; border-collapse: collapse; overflow: hidden; }
+    th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--line); font-variant-numeric: tabular-nums; }
+    th { color: var(--muted); font-size: 0.8rem; font-weight: 600; }
+    td.num, th.num { text-align: right; }
+    .out { color: var(--out); }
+    .in { color: var(--in); }
+    .empty { color: var(--muted); }
+    section { margin-bottom: 28px; }
+    @media (max-width: 720px) {
+      .summary { grid-template-columns: 1fr 1fr; }
+      header, .toolbar, .item { flex-direction: column; align-items: stretch; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <div>
+        <p class="eyebrow">Personal Ledger</p>
+        <h1>Institutions</h1>
+      </div>
+      <p id="provider" class="badge">Checking server…</p>
+    </header>
+
+    <form id="key-form">
+      <div>
+        <label for="api-key">API key</label>
+        <input id="api-key" name="api-key" type="password" autocomplete="off" required>
+      </div>
+      <button type="submit">Save key</button>
+    </form>
+    <p id="status" role="status"></p>
+
+    <div class="toolbar">
+      <button id="connect" type="button">Connect institution</button>
+      <p id="hint"></p>
+    </div>
+
+    <section aria-label="Summary">
+      <div id="summary" class="summary"></div>
+    </section>
+
+    <section>
+      <h2>Connected</h2>
+      <div id="items" class="list"></div>
+    </section>
+
+    <section>
+      <h2>Accounts</h2>
+      <div id="accounts"></div>
+    </section>
+
+    <section>
+      <h2>Recent transactions</h2>
+      <div id="transactions"></div>
+    </section>
+  </main>
+
+  <script src="https://cdn.plaid.com/link/v2/stable/link-initialize.js"></script>
+  <script>
+    const keyForm = document.querySelector("#key-form");
+    const keyInput = document.querySelector("#api-key");
+    const statusEl = document.querySelector("#status");
+    const providerEl = document.querySelector("#provider");
+    const hintEl = document.querySelector("#hint");
+    const connectBtn = document.querySelector("#connect");
+    const summaryEl = document.querySelector("#summary");
+    const itemsEl = document.querySelector("#items");
+    const accountsEl = document.querySelector("#accounts");
+    const transactionsEl = document.querySelector("#transactions");
+
+    const KEY = "ledger.apiKey";
+    const USER = "ledger.clientUserId";
+    let providerName = "unknown";
+
+    function setStatus(message) {
+      statusEl.textContent = message;
+    }
+
+    function money(value, currency) {
+      return new Intl.NumberFormat("en-US", {
+        style: "currency",
+        currency: currency || "USD",
+      }).format(Number(value || 0));
+    }
+
+    function when(value) {
+      if (!value) return "never synced";
+      const date = new Date(value);
+      if (Number.isNaN(date.getTime())) return value;
+      return date.toLocaleString();
+    }
+
+    function clientUserId() {
+      let id = sessionStorage.getItem(USER);
+      if (!id) {
+        id = "ledger-" + crypto.randomUUID();
+        sessionStorage.setItem(USER, id);
+      }
+      return id;
+    }
+
+    function empty(parent, message) {
+      parent.replaceChildren();
+      const p = document.createElement("p");
+      p.className = "empty";
+      p.textContent = message;
+      parent.appendChild(p);
+    }
+
+    async function api(path, options) {
+      const headers = new Headers(options && options.headers);
+      headers.set("X-API-Key", sessionStorage.getItem(KEY) || "");
+      if (options && options.body) headers.set("Content-Type", "application/json");
+      const response = await fetch(path, { method: options && options.method, body: options && options.body, headers });
+      const text = await response.text();
+      let body = null;
+      if (text) {
+        try {
+          body = JSON.parse(text);
+        } catch (_err) {
+          body = { detail: text };
+        }
+      }
+      if (!response.ok) {
+        const detail = body && body.detail ? body.detail : response.statusText;
+        throw new Error(typeof detail === "string" ? detail : "Request failed");
+      }
+      return body;
+    }
+
+    function renderSummary(summary) {
+      const rows = [
+        ["Cash", summary.cash],
+        ["Investments", summary.investments],
+        ["Liabilities", summary.liabilities],
+        ["Net worth", summary.net_worth],
+      ];
+      summaryEl.replaceChildren();
+      for (const [label, value] of rows) {
+        const card = document.createElement("div");
+        card.className = "card";
+        const span = document.createElement("span");
+        span.textContent = label;
+        const strong = document.createElement("strong");
+        strong.textContent = money(value);
+        card.append(span, strong);
+        summaryEl.appendChild(card);
+      }
+    }
+
+    function renderItems(items) {
+      if (!items.length) {
+        empty(itemsEl, "No institutions yet.");
+        return;
+      }
+      itemsEl.replaceChildren();
+      for (const item of items) {
+        const row = document.createElement("article");
+        row.className = "item card";
+        const text = document.createElement("div");
+        const title = document.createElement("strong");
+        title.textContent = item.institution_name || "Institution";
+        const meta = document.createElement("p");
+        meta.textContent = item.status + " · last sync " + when(item.last_synced_at);
+        if (item.error) meta.textContent += " · " + item.error;
+        text.append(title, meta);
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "secondary";
+        button.textContent = "Sync";
+        button.addEventListener("click", () => syncItem(item.id, title.textContent));
+        row.append(text, button);
+        itemsEl.appendChild(row);
+      }
+    }
+
+    function renderAccounts(accounts) {
+      if (!accounts.length) {
+        empty(accountsEl, "No accounts yet.");
+        return;
+      }
+      const table = document.createElement("table");
+      const head = document.createElement("tr");
+      for (const label of ["Account", "Type", "Balance"]) {
+        const cell = document.createElement("th");
+        cell.textContent = label;
+        if (label === "Balance") cell.className = "num";
+        head.appendChild(cell);
+      }
+      const thead = document.createElement("thead");
+      thead.appendChild(head);
+      const tbody = document.createElement("tbody");
+      for (const account of accounts) {
+        const row = document.createElement("tr");
+        const name = document.createElement("td");
+        name.textContent = account.mask ? account.name + " · " + account.mask : account.name;
+        const type = document.createElement("td");
+        type.textContent = account.subtype || account.type;
+        const balance = document.createElement("td");
+        balance.className = "num";
+        balance.textContent = money(account.current_balance, account.iso_currency_code);
+        row.append(name, type, balance);
+        tbody.appendChild(row);
+      }
+      table.append(thead, tbody);
+      accountsEl.replaceChildren(table);
+    }
+
+    function renderTransactions(page) {
+      const rows = page.data || [];
+      if (!rows.length) {
+        empty(transactionsEl, "No transactions yet. If you just connected, wait a few seconds and use Sync.");
+        return;
+      }
+      const table = document.createElement("table");
+      const head = document.createElement("tr");
+      for (const label of ["Date", "Name", "Account", "Amount"]) {
+        const cell = document.createElement("th");
+        cell.textContent = label;
+        if (label === "Amount") cell.className = "num";
+        head.appendChild(cell);
+      }
+      const thead = document.createElement("thead");
+      thead.appendChild(head);
+      const tbody = document.createElement("tbody");
+      for (const txn of rows) {
+        const row = document.createElement("tr");
+        const date = document.createElement("td");
+        date.textContent = txn.posted_on;
+        const name = document.createElement("td");
+        name.textContent = txn.merchant_name || txn.name;
+        const account = document.createElement("td");
+        account.textContent = txn.account_name || "";
+        const amount = document.createElement("td");
+        amount.className = "num " + (txn.flow === "inflow" ? "in" : "out");
+        const signed = txn.flow === "inflow" ? Math.abs(txn.amount) : -Math.abs(txn.amount);
+        amount.textContent = money(signed, txn.iso_currency_code);
+        row.append(date, name, account, amount);
+        tbody.appendChild(row);
+      }
+      table.append(thead, tbody);
+      transactionsEl.replaceChildren(table);
+    }
+
+    async function refresh() {
+      const [summary, items, accounts, transactions] = await Promise.all([
+        api("/v1/summary"),
+        api("/v1/items"),
+        api("/v1/accounts"),
+        api("/v1/transactions?limit=15"),
+      ]);
+      renderSummary(summary);
+      renderItems(items);
+      renderAccounts(accounts);
+      renderTransactions(transactions);
+    }
+
+    async function syncItem(id, name) {
+      setStatus("Syncing " + name + "…");
+      try {
+        const result = await api("/v1/items/" + encodeURIComponent(id) + "/sync", { method: "POST" });
+        const sync = result.sync;
+        setStatus(name + " synced. " + sync.transactions_upserted + " transactions, " + sync.accounts + " accounts.");
+        await refresh();
+      } catch (err) {
+        setStatus(err.message);
+      }
+    }
+
+    function openLink(linkToken) {
+      return new Promise((resolve, reject) => {
+        let finished = false;
+        const handler = Plaid.create({
+          token: linkToken,
+          onSuccess(publicToken) {
+            finished = true;
+            resolve(publicToken);
+          },
+          onExit(err) {
+            if (finished) return;
+            if (err) {
+              reject(new Error(err.display_message || err.error_message || "Plaid Link failed"));
+              return;
+            }
+            resolve(null);
+          },
+        });
+        handler.open();
+      });
+    }
+
+    async function connect() {
+      if (!sessionStorage.getItem(KEY)) {
+        setStatus("Save the API key from your .env file first.");
+        keyInput.focus();
+        return;
+      }
+      connectBtn.disabled = true;
+      try {
+        if (providerName === "mock") {
+          setStatus("Connecting the sample institution…");
+          await api("/v1/items", { method: "POST", body: "{}" });
+          setStatus("Sample institution connected.");
+          await refresh();
+          return;
+        }
+        if (!window.Plaid) {
+          throw new Error("Plaid Link did not load. Check the network and reload the page.");
+        }
+        setStatus("Opening Plaid Link…");
+        const token = await api("/v1/link/token", {
+          method: "POST",
+          body: JSON.stringify({ client_user_id: clientUserId() }),
+        });
+        const publicToken = await openLink(token.link_token);
+        if (!publicToken) {
+          setStatus("Link closed before a connection was made.");
+          return;
+        }
+        setStatus("Exchanging the connection and syncing…");
+        const result = await api("/v1/items", {
+          method: "POST",
+          body: JSON.stringify({ public_token: publicToken }),
+        });
+        const name = result.item.institution_name || "Institution";
+        setStatus(name + " connected. " + result.sync.accounts + " accounts, " + result.sync.transactions_upserted + " transactions.");
+        await refresh();
+      } catch (err) {
+        setStatus(err.message);
+      } finally {
+        connectBtn.disabled = false;
+      }
+    }
+
+    keyForm.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      sessionStorage.setItem(KEY, keyInput.value.trim());
+      setStatus("Loading ledger…");
+      try {
+        await refresh();
+        setStatus("Key saved in this browser tab.");
+      } catch (err) {
+        setStatus(err.message);
+      }
+    });
+    connectBtn.addEventListener("click", connect);
+
+    const saved = sessionStorage.getItem(KEY);
+    if (saved) keyInput.value = saved;
+
+    fetch("/health")
+      .then((response) => response.json())
+      .then((health) => {
+        providerName = health.provider || "unknown";
+        providerEl.textContent = providerName === "plaid" ? "Plaid" : "Sample data";
+        hintEl.textContent = providerName === "plaid"
+          ? "In Link, continue without a phone number, then search First Platypus Bank. Username user_good, password pass_good. Code, if asked: 1234."
+          : "Plaid keys are empty, so Connect attaches the built-in sample institution.";
+        if (saved) {
+          return refresh().then(() => setStatus(""));
+        }
+        setStatus("Save the API key from your .env file, then connect an institution.");
+      })
+      .catch(() => {
+        providerEl.textContent = "Offline";
+        setStatus("The ledger server did not respond.");
+      });
+  </script>
+</body>
+</html>

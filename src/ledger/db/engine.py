@@ -34,13 +34,22 @@ def _configure_sqlite(engine: Engine) -> None:
         cursor.close()
 
 
+def _normalize_database_url(url: str) -> str:
+    """Neon copies a postgresql:// URL. SQLAlchemy needs the psycopg driver named."""
+    if url.startswith("postgres://"):
+        return "postgresql+psycopg://" + url.removeprefix("postgres://")
+    if url.startswith("postgresql://"):
+        return "postgresql+psycopg://" + url.removeprefix("postgresql://")
+    return url
+
+
 def get_engine() -> Engine:
     global _engine, _SessionLocal
     if _engine is not None:
         return _engine
 
     settings = get_settings()
-    url = settings.database_url
+    url = _normalize_database_url(settings.database_url)
     path = _sqlite_path(url)
     if path is not None:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -50,6 +59,11 @@ def get_engine() -> Engine:
         kwargs["connect_args"] = {"check_same_thread": False}
         if ":memory:" in url:
             kwargs["poolclass"] = StaticPool
+    elif url.startswith("postgresql"):
+        kwargs["pool_pre_ping"] = True
+        kwargs["pool_size"] = 2
+        kwargs["max_overflow"] = 0
+        kwargs["connect_args"] = {"prepare_threshold": None}
 
     _engine = create_engine(url, **kwargs)
     if _engine.dialect.name == "sqlite":

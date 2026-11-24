@@ -4,6 +4,8 @@ def test_health_is_public(api):
     body = response.json()
     assert body["status"] == "ok"
     assert body["provider"] == "mock"
+    assert body["database"] == "sqlite"
+    assert "sqlite:///" not in response.text
 
 
 def test_query_requires_api_key(api):
