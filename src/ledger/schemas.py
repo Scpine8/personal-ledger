@@ -78,9 +78,20 @@ class AccountOut(BaseModel):
     current_balance: float | None
     limit_amount: float | None
     institution_name: str | None = None
+    last_synced_at: datetime | None = None
+    connection_label: str = "Connected"
+    connection_action: str = "none"
+    connection_detail: str | None = None
 
     @classmethod
     def from_row(cls, account) -> "AccountOut":
+        from ledger.services.connection import describe_connection
+
+        item = account.item
+        label, action = describe_connection(
+            item.status if item else "active",
+            item.error if item else None,
+        )
         return cls(
             id=account.id,
             item_id=account.item_id,
@@ -93,7 +104,11 @@ class AccountOut(BaseModel):
             available_balance=_dec(account.available_balance),
             current_balance=_dec(account.current_balance),
             limit_amount=_dec(account.limit_amount),
-            institution_name=account.item.institution_name if account.item else None,
+            institution_name=item.institution_name if item else None,
+            last_synced_at=item.last_synced_at if item else None,
+            connection_label=label,
+            connection_action=action,
+            connection_detail=item.error if item else None,
         )
 
 

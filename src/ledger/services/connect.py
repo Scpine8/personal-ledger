@@ -9,8 +9,12 @@ from ledger.services.repo import upsert
 from ledger.services.sync import SyncResult, sync_item
 
 
-def create_link_token(provider: FinanceProvider, client_user_id: str | None) -> dict:
-    token = provider.create_link_token(client_user_id or "personal-ledger-user")
+def create_link_token(
+    provider: FinanceProvider,
+    client_user_id: str | None,
+    access_token: str | None = None,
+) -> dict:
+    token = provider.create_link_token(client_user_id or "personal-ledger-user", access_token)
     return {
         "link_token": token.link_token,
         "expiration": token.expiration,

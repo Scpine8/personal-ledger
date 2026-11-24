@@ -2,7 +2,7 @@
 
 A personal finance service. It connects bank and brokerage accounts through [Plaid](https://plaid.com), stores balances, transactions, and investments in a local SQL database, and exposes a query API any client can call.
 
-A local page at `/` opens Plaid Link and lists what was synced. The contract for other clients is still JSON over HTTP. FastAPI’s `/docs` inspects that contract.
+A local page at `/` opens Plaid Link and lists connected accounts. The contract for other clients is still JSON over HTTP. FastAPI’s `/docs` inspects that contract.
 
 ## Architecture
 
@@ -92,12 +92,13 @@ Interactive schema: `http://127.0.0.1:8787/docs`
 ## Run locally
 
 ```bash
-cp .env.example .env
-uv sync --extra dev
-uv run ledger
+make setup
+make serve
 ```
 
-The server listens on **8787**. Open `http://127.0.0.1:8787`, save the API key from `.env`, and use **Connect institution**.
+`make setup` copies `.env.example` to `.env` when that file is missing, then installs dependencies. Put Plaid keys and, for the shared database, a Neon `DATABASE_URL` in `.env`. The server listens on **8787**. Open `http://127.0.0.1:8787`, save the API key from `.env`, and use **Connect institution**.
+
+`make publish-db` creates any missing tables on `DATABASE_URL`. It does not change columns that already exist. `make publish-ui` restarts the local server so route changes are served. Page edits in `src/ledger/ui/index.html` are read on the next request. `make` lists the financial queries (`net-worth`, `accounts`, `recent`, and others).
 
 Mock mode (empty Plaid keys) attaches the sample institution from that button, or from:
 

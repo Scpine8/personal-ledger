@@ -25,6 +25,7 @@ from ledger.config import Settings
 from ledger.providers.types import (
     AccountSnapshot,
     CashTxn,
+    ConnectionState,
     HoldingSnapshot,
     HoldingsPayload,
     Institution,
@@ -92,14 +93,19 @@ class PlaidProvider:
         self._settings = settings
         self._client = plaid_api.PlaidApi(plaid.ApiClient(configuration))
 
-    def create_link_token(self, client_user_id: str) -> LinkToken:
-        request = LinkTokenCreateRequest(
-            products=[Products("transactions"), Products("investments")],
-            client_name="Personal Ledger",
-            country_codes=[CountryCode(code) for code in self._settings.country_codes],
-            language="en",
-            user=LinkTokenCreateRequestUser(client_user_id=client_user_id),
-        )
+    def create_link_token(self, client_user_id: str, access_token: str | None = None) -> LinkToken:
+        fields: dict[str, Any] = {
+            "client_name": "Personal Ledger",
+            "country_codes": [CountryCode(code) for code in self._settings.country_codes],
+            "language": "en",
+            "user": LinkTokenCreateRequestUser(client_user_id=client_user_id),
+        }
+        if access_token:
+            # Update mode repairs this item. Plaid keeps the same access token.
+            fields["access_token"] = access_token
+        else:
+            fields["products"] = [Products("transactions"), Products("investments")]
+        request = LinkTokenCreateRequest(**fields)
         if self._settings.plaid_redirect_uri:
             request.redirect_uri = self._settings.plaid_redirect_uri
         response = _as_dict(self._client.link_token_create(request))
@@ -108,6 +114,18 @@ class PlaidProvider:
             expiration=_str(response.get("expiration")),
             request_id=_str(response.get("request_id")),
         )
+
+    def get_connection(self, access_token: str) -> ConnectionState:
+        try:
+            item = _as_dict(self._client.item_get(ItemGetRequest(access_token=access_token))).get(
+                "item"
+            ) or {}
+        except ApiException as exc:
+            return ConnectionState(status="error", error=_plaid_error_text(exc))
+        error = item.get("error")
+        if not error:
+            return ConnectionState(status="active", error=None)
+        return ConnectionState(status="error", error=_plaid_error_text(error))
 
     def exchange_public_token(self, public_token: str) -> ItemCredentials:
         response = _as_dict(
@@ -237,6 +255,31 @@ class PlaidProvider:
         return InvestmentTxnPayload(
             transactions=transactions, securities=list(securities.values())
         )
+
+
+def _plaid_error_text(error: Any) -> str:
+    body = error
+    if isinstance(error, ApiException):
+        raw = getattr(error, "body", None)
+        if isinstance(raw, str):
+            try:
+                import json
+
+                body = json.loads(raw)
+            except json.JSONDecodeError:
+                body = raw
+        else:
+            body = raw or str(error)
+    if isinstance(body, dict):
+        nested = body.get("error") if isinstance(body.get("error"), dict) else body
+        code = str(nested.get("error_code") or "").strip()
+        message = str(nested.get("error_message") or "").strip()
+        if code and message:
+            return f"{code}: {message}"
+        if code or message:
+            return code or message
+    text = str(body)
+    return text[:300]
 
 
 def _cash_txn(raw: dict[str, Any]) -> CashTxn:

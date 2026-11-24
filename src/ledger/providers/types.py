@@ -37,6 +37,14 @@ class Institution:
 
 
 @dataclass(frozen=True)
+class ConnectionState:
+    """Plaid's current item health. status is active or error."""
+
+    status: str
+    error: str | None = None
+
+
+@dataclass(frozen=True)
 class AccountSnapshot:
     account_id: str
     name: str

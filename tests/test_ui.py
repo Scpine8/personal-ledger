@@ -4,6 +4,12 @@ def test_home_page_is_the_connect_ui(api):
     assert "text/html" in response.headers["content-type"]
     body = response.text
     assert "Connect institution" in body
+    assert "Sync all" in body
+    assert "Last synced" in body
+    assert "Reconnect" in body
+    assert "Recent transactions" not in body
+    assert "/v1/transactions" not in body
     assert "test-key" not in body
     assert "/v1/link/token" in body
-    assert "/v1/items" in body
+    assert "/v1/accounts" in body
+    assert "/v1/items/" in body

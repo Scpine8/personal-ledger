@@ -8,6 +8,7 @@ from ledger.config import Settings, get_settings
 from ledger.db.models import Item
 from ledger.providers.base import FinanceProvider
 from ledger.schemas import WebhookAck
+from ledger.services.connection import note_webhook
 from ledger.services.repo import get_by
 from ledger.services.sync import sync_item
 
@@ -18,6 +19,14 @@ _SYNC_CODES = {
     "DEFAULT_UPDATE",
     "HISTORICAL_UPDATE",
     "INITIAL_UPDATE",
+}
+_CONNECTION_CODES = {
+    "ERROR",
+    "PENDING_EXPIRATION",
+    "PENDING_DISCONNECT",
+    "USER_PERMISSION_REVOKED",
+    "USER_ACCOUNT_REVOKED",
+    "LOGIN_REPAIRED",
 }
 
 
@@ -34,11 +43,15 @@ def plaid_webhook(
 
     code = str(body.get("webhook_code") or "")
     provider_item_id = body.get("item_id")
-    if code not in _SYNC_CODES or not provider_item_id:
+    if code not in _SYNC_CODES | _CONNECTION_CODES or not provider_item_id:
         return WebhookAck(accepted=True, reason="ignored")
 
     item = get_by(session, Item, provider=finance.name, provider_item_id=str(provider_item_id))
     if item is None:
         return WebhookAck(accepted=True, reason="unknown_item")
+    if code in _CONNECTION_CODES:
+        note_webhook(item, code, body)
+        if code != "LOGIN_REPAIRED":
+            return WebhookAck(accepted=True, reason="connection_error")
     sync_item(session, finance, item)
     return WebhookAck(accepted=True, synced_item_id=item.id)

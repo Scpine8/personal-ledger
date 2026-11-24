@@ -26,6 +26,7 @@ def test_connect_persists_and_query_round_trip(api, auth):
 
     assert item["institution_name"] == "First Platypus Bank"
     assert "access_token" not in item
+    assert item["last_synced_at"]
     assert sync["accounts"] == 3
     assert sync["transactions_upserted"] == 10
     assert sync["holdings"] == 2
@@ -33,6 +34,9 @@ def test_connect_persists_and_query_round_trip(api, auth):
 
     accounts = api.get("/v1/accounts", headers=auth).json()
     assert len(accounts) == 3
+    assert accounts[0]["connection_label"] == "Connected"
+    assert accounts[0]["connection_action"] == "none"
+    assert accounts[0]["last_synced_at"]
     types = {row["type"] for row in accounts}
     assert types == {"depository", "credit", "investment"}
 
@@ -99,3 +103,60 @@ def test_webhook_syncs_known_item(api, auth):
     )
     assert response.status_code == 200
     assert response.json()["synced_item_id"] == connected["item"]["id"]
+
+
+def test_connection_labels_distinguish_repair_from_outage():
+    from ledger.services.connection import describe_connection
+
+    assert describe_connection("active", None) == ("Connected", "none")
+    assert describe_connection("error", "ITEM_LOGIN_REQUIRED: login changed") == (
+        "Needs reconnect",
+        "update",
+    )
+    assert describe_connection("error", "USER_PERMISSION_REVOKED: revoked") == (
+        "Needs a new connection",
+        "connect",
+    )
+    assert describe_connection("error", "INSTITUTION_DOWN: try later") == (
+        "Institution unavailable",
+        "none",
+    )
+
+
+def test_item_error_webhook_marks_accounts_for_reconnect(api, auth):
+    connected = _connect(api, auth)
+    provider_item_id = connected["item"]["provider_item_id"]
+    response = api.post(
+        "/v1/webhooks/plaid",
+        json={
+            "webhook_type": "ITEM",
+            "webhook_code": "ERROR",
+            "item_id": provider_item_id,
+            "error": {
+                "error_code": "ITEM_LOGIN_REQUIRED",
+                "error_message": "the login details of this item have changed",
+            },
+        },
+        headers={"X-Webhook-Secret": "hook-secret"},
+    )
+    assert response.status_code == 200
+    assert response.json()["reason"] == "connection_error"
+
+    accounts = api.get("/v1/accounts", headers=auth).json()
+    assert accounts[0]["connection_label"] == "Needs reconnect"
+    assert accounts[0]["connection_action"] == "update"
+    assert "ITEM_LOGIN_REQUIRED" in accounts[0]["connection_detail"]
+
+    token = api.post(
+        f"/v1/items/{connected['item']['id']}/link-token",
+        json={"client_user_id": "sean"},
+        headers=auth,
+    )
+    assert token.status_code == 200
+    assert token.json()["link_token"].startswith("link-sandbox-mock-update-")
+
+    health = api.post("/v1/items/health", headers=auth)
+    assert health.status_code == 200
+    assert health.json()[0]["status"] == "active"
+    accounts = api.get("/v1/accounts", headers=auth).json()
+    assert accounts[0]["connection_label"] == "Connected"

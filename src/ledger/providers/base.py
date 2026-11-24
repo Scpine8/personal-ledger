@@ -3,6 +3,7 @@ from typing import Protocol
 
 from ledger.providers.types import (
     AccountSnapshot,
+    ConnectionState,
     HoldingsPayload,
     Institution,
     InvestmentTxnPayload,
@@ -17,7 +18,11 @@ class FinanceProvider(Protocol):
 
     name: str
 
-    def create_link_token(self, client_user_id: str) -> LinkToken: ...
+    def create_link_token(
+        self, client_user_id: str, access_token: str | None = None
+    ) -> LinkToken: ...
+
+    def get_connection(self, access_token: str) -> ConnectionState: ...
 
     def exchange_public_token(self, public_token: str) -> ItemCredentials: ...
 

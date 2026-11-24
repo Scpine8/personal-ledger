@@ -7,6 +7,7 @@ from decimal import Decimal
 from ledger.providers.types import (
     AccountSnapshot,
     CashTxn,
+    ConnectionState,
     HoldingSnapshot,
     HoldingsPayload,
     Institution,
@@ -25,12 +26,16 @@ class MockProvider:
 
     name = "mock"
 
-    def create_link_token(self, client_user_id: str) -> LinkToken:
+    def create_link_token(self, client_user_id: str, access_token: str | None = None) -> LinkToken:
+        kind = "update" if access_token else "link"
         return LinkToken(
-            link_token=f"link-sandbox-mock-{client_user_id}",
+            link_token=f"link-sandbox-mock-{kind}-{client_user_id}",
             expiration=None,
             request_id="mock-link",
         )
+
+    def get_connection(self, access_token: str) -> ConnectionState:
+        return ConnectionState(status="active", error=None)
 
     def exchange_public_token(self, public_token: str) -> ItemCredentials:
         suffix = uuid.uuid4().hex[:10]

@@ -15,7 +15,6 @@
       --green: #1d6b45;
       --green-ink: #f4fff8;
       --out: #8d3b2a;
-      --in: #1d6b45;
     }
     * { box-sizing: border-box; }
     body {
@@ -36,9 +35,7 @@
       align-items: flex-end;
       margin-bottom: 24px;
     }
-    h1, h2 { font-family: Palatino, "Iowan Old Style", Georgia, serif; font-weight: 600; }
-    h1 { margin: 0; font-size: 2rem; }
-    h2 { margin: 0 0 12px; font-size: 1.25rem; }
+    h1 { font-family: Palatino, "Iowan Old Style", Georgia, serif; font-weight: 600; margin: 0; font-size: 2rem; }
     .eyebrow { margin: 0 0 4px; letter-spacing: 0.08em; text-transform: uppercase; font-size: 0.75rem; color: var(--muted); }
     .badge {
       margin: 0;
@@ -49,7 +46,7 @@
       color: var(--muted);
       font-size: 0.85rem;
     }
-    form, .panel, .card, table {
+    form, table {
       background: var(--card);
       border: 1px solid var(--line);
       border-radius: 12px;
@@ -84,24 +81,30 @@
     #status { min-height: 1.4em; color: var(--muted); }
     .toolbar { margin: 18px 0 8px; }
     #hint { margin: 0 0 18px; color: var(--muted); font-size: 0.92rem; max-width: 62ch; }
-    .summary { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 28px; }
-    .card { padding: 14px; }
-    .card span { display: block; color: var(--muted); font-size: 0.8rem; }
-    .card strong { display: block; margin-top: 6px; font-size: 1.25rem; font-variant-numeric: tabular-nums; }
-    .list { display: grid; gap: 10px; }
-    .item { display: flex; justify-content: space-between; gap: 12px; align-items: center; padding: 14px; }
-    .item p { margin: 4px 0 0; color: var(--muted); font-size: 0.9rem; }
+    .accounts { overflow-x: auto; }
     table { width: 100%; border-collapse: collapse; overflow: hidden; }
-    th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--line); font-variant-numeric: tabular-nums; }
+    th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--line); vertical-align: middle; }
     th { color: var(--muted); font-size: 0.8rem; font-weight: 600; }
     td.num, th.num { text-align: right; }
-    .out { color: var(--out); }
-    .in { color: var(--in); }
+    th .sort {
+      background: transparent;
+      color: inherit;
+      border: 0;
+      padding: 0;
+      font: inherit;
+      font-weight: 600;
+      font-size: inherit;
+      cursor: pointer;
+    }
+    th[aria-sort="ascending"] .sort::after { content: " \2191"; }
+    th[aria-sort="descending"] .sort::after { content: " \2193"; }
+    td.action, th.action { width: 1%; white-space: nowrap; text-align: right; }
+    .table-tools { display: flex; justify-content: flex-end; margin: 0 0 8px; }
+    .bad { color: var(--out); }
+    .health { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
     .empty { color: var(--muted); }
-    section { margin-bottom: 28px; }
     @media (max-width: 720px) {
-      .summary { grid-template-columns: 1fr 1fr; }
-      header, .toolbar, .item { flex-direction: column; align-items: stretch; }
+      header { flex-direction: column; align-items: stretch; }
     }
   </style>
 </head>
@@ -110,7 +113,7 @@
     <header>
       <div>
         <p class="eyebrow">Personal Ledger</p>
-        <h1>Institutions</h1>
+        <h1>Accounts</h1>
       </div>
       <p id="provider" class="badge">Checking server…</p>
     </header>
@@ -129,24 +132,7 @@
       <p id="hint"></p>
     </div>
 
-    <section aria-label="Summary">
-      <div id="summary" class="summary"></div>
-    </section>
-
-    <section>
-      <h2>Connected</h2>
-      <div id="items" class="list"></div>
-    </section>
-
-    <section>
-      <h2>Accounts</h2>
-      <div id="accounts"></div>
-    </section>
-
-    <section>
-      <h2>Recent transactions</h2>
-      <div id="transactions"></div>
-    </section>
+    <div id="accounts" class="accounts"></div>
   </main>
 
   <script src="https://cdn.plaid.com/link/v2/stable/link-initialize.js"></script>
@@ -157,14 +143,14 @@
     const providerEl = document.querySelector("#provider");
     const hintEl = document.querySelector("#hint");
     const connectBtn = document.querySelector("#connect");
-    const summaryEl = document.querySelector("#summary");
-    const itemsEl = document.querySelector("#items");
     const accountsEl = document.querySelector("#accounts");
-    const transactionsEl = document.querySelector("#transactions");
 
     const KEY = "ledger.apiKey";
     const USER = "ledger.clientUserId";
     let providerName = "unknown";
+    let accounts = [];
+    let sortKey = null;
+    let sortDir = 1;
 
     function setStatus(message) {
       statusEl.textContent = message;
@@ -177,8 +163,22 @@
       }).format(Number(value || 0));
     }
 
+    function typeLabel(account) {
+      return account.subtype || account.type || "";
+    }
+
+    function balanceValue(account) {
+      const value = Number(account.current_balance);
+      return Number.isFinite(value) ? value : 0;
+    }
+
+    function syncedValue(account) {
+      const value = Date.parse(account.last_synced_at || "");
+      return Number.isFinite(value) ? value : 0;
+    }
+
     function when(value) {
-      if (!value) return "never synced";
+      if (!value) return "Not synced";
       const date = new Date(value);
       if (Number.isNaN(date.getTime())) return value;
       return date.toLocaleString();
@@ -222,142 +222,195 @@
       return body;
     }
 
-    function renderSummary(summary) {
-      const rows = [
-        ["Cash", summary.cash],
-        ["Investments", summary.investments],
-        ["Liabilities", summary.liabilities],
-        ["Net worth", summary.net_worth],
-      ];
-      summaryEl.replaceChildren();
-      for (const [label, value] of rows) {
-        const card = document.createElement("div");
-        card.className = "card";
-        const span = document.createElement("span");
-        span.textContent = label;
-        const strong = document.createElement("strong");
-        strong.textContent = money(value);
-        card.append(span, strong);
-        summaryEl.appendChild(card);
-      }
+    function sortedAccounts() {
+      const rows = accounts.slice();
+      if (!sortKey) return rows;
+      rows.sort((a, b) => {
+        if (sortKey === "type") {
+          return typeLabel(a).localeCompare(typeLabel(b)) * sortDir;
+        }
+        if (sortKey === "synced") {
+          return (syncedValue(a) - syncedValue(b)) * sortDir;
+        }
+        return (balanceValue(a) - balanceValue(b)) * sortDir;
+      });
+      return rows;
     }
 
-    function renderItems(items) {
-      if (!items.length) {
-        empty(itemsEl, "No institutions yet.");
-        return;
-      }
-      itemsEl.replaceChildren();
-      for (const item of items) {
-        const row = document.createElement("article");
-        row.className = "item card";
-        const text = document.createElement("div");
-        const title = document.createElement("strong");
-        title.textContent = item.institution_name || "Institution";
-        const meta = document.createElement("p");
-        meta.textContent = item.status + " · last sync " + when(item.last_synced_at);
-        if (item.error) meta.textContent += " · " + item.error;
-        text.append(title, meta);
-        const button = document.createElement("button");
-        button.type = "button";
-        button.className = "secondary";
-        button.textContent = "Sync";
-        button.addEventListener("click", () => syncItem(item.id, title.textContent));
-        row.append(text, button);
-        itemsEl.appendChild(row);
-      }
+    function sortHeader(label, key, numeric) {
+      const cell = document.createElement("th");
+      if (numeric) cell.className = "num";
+      cell.setAttribute("aria-sort", sortKey === key ? (sortDir > 0 ? "ascending" : "descending") : "none");
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "sort";
+      button.textContent = label;
+      button.addEventListener("click", () => {
+        if (sortKey === key) sortDir *= -1;
+        else {
+          sortKey = key;
+          sortDir = key === "type" ? 1 : -1;
+        }
+        renderAccounts();
+      });
+      cell.appendChild(button);
+      return cell;
     }
 
-    function renderAccounts(accounts) {
+    function renderAccounts() {
       if (!accounts.length) {
         empty(accountsEl, "No accounts yet.");
         return;
       }
       const table = document.createElement("table");
       const head = document.createElement("tr");
-      for (const label of ["Account", "Type", "Balance"]) {
-        const cell = document.createElement("th");
-        cell.textContent = label;
-        if (label === "Balance") cell.className = "num";
-        head.appendChild(cell);
-      }
+      const nameHeader = document.createElement("th");
+      nameHeader.textContent = "Name";
+      const connectionHeader = document.createElement("th");
+      connectionHeader.textContent = "Connection";
+      const actionHeader = document.createElement("th");
+      actionHeader.className = "action";
+      actionHeader.textContent = "";
+      head.append(
+        nameHeader,
+        sortHeader("Type", "type", false),
+        sortHeader("Balance", "balance", true),
+        sortHeader("Last synced", "synced", false),
+        connectionHeader,
+        actionHeader,
+      );
       const thead = document.createElement("thead");
       thead.appendChild(head);
       const tbody = document.createElement("tbody");
-      for (const account of accounts) {
+      for (const account of sortedAccounts()) {
         const row = document.createElement("tr");
         const name = document.createElement("td");
-        name.textContent = account.mask ? account.name + " · " + account.mask : account.name;
+        name.textContent = account.name;
         const type = document.createElement("td");
-        type.textContent = account.subtype || account.type;
+        type.textContent = typeLabel(account);
         const balance = document.createElement("td");
         balance.className = "num";
         balance.textContent = money(account.current_balance, account.iso_currency_code);
-        row.append(name, type, balance);
+        const synced = document.createElement("td");
+        synced.textContent = when(account.last_synced_at);
+        const connection = document.createElement("td");
+        const health = document.createElement("div");
+        health.className = "health";
+        const label = document.createElement("span");
+        label.textContent = account.connection_label || "Connected";
+        if (account.connection_action && account.connection_action !== "none") {
+          label.className = "bad";
+        }
+        if (account.connection_detail) health.title = account.connection_detail;
+        health.appendChild(label);
+        if (account.connection_action === "update" || account.connection_action === "connect") {
+          const repair = document.createElement("button");
+          repair.type = "button";
+          repair.className = "secondary";
+          repair.textContent = account.connection_action === "connect" ? "Connect again" : "Reconnect";
+          repair.addEventListener("click", () => reconnect(account, repair));
+          health.appendChild(repair);
+        }
+        connection.appendChild(health);
+        const action = document.createElement("td");
+        action.className = "action";
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "secondary";
+        button.textContent = "Sync";
+        button.addEventListener("click", () => syncItem(account.item_id, account.name, button));
+        action.appendChild(button);
+        row.append(name, type, balance, synced, connection, action);
         tbody.appendChild(row);
       }
       table.append(thead, tbody);
-      accountsEl.replaceChildren(table);
-    }
-
-    function renderTransactions(page) {
-      const rows = page.data || [];
-      if (!rows.length) {
-        empty(transactionsEl, "No transactions yet. If you just connected, wait a few seconds and use Sync.");
-        return;
-      }
-      const table = document.createElement("table");
-      const head = document.createElement("tr");
-      for (const label of ["Date", "Name", "Account", "Amount"]) {
-        const cell = document.createElement("th");
-        cell.textContent = label;
-        if (label === "Amount") cell.className = "num";
-        head.appendChild(cell);
-      }
-      const thead = document.createElement("thead");
-      thead.appendChild(head);
-      const tbody = document.createElement("tbody");
-      for (const txn of rows) {
-        const row = document.createElement("tr");
-        const date = document.createElement("td");
-        date.textContent = txn.posted_on;
-        const name = document.createElement("td");
-        name.textContent = txn.merchant_name || txn.name;
-        const account = document.createElement("td");
-        account.textContent = txn.account_name || "";
-        const amount = document.createElement("td");
-        amount.className = "num " + (txn.flow === "inflow" ? "in" : "out");
-        const signed = txn.flow === "inflow" ? Math.abs(txn.amount) : -Math.abs(txn.amount);
-        amount.textContent = money(signed, txn.iso_currency_code);
-        row.append(date, name, account, amount);
-        tbody.appendChild(row);
-      }
-      table.append(thead, tbody);
-      transactionsEl.replaceChildren(table);
+      const tools = document.createElement("div");
+      tools.className = "table-tools";
+      const syncAll = document.createElement("button");
+      syncAll.type = "button";
+      syncAll.className = "secondary";
+      syncAll.textContent = "Sync all";
+      syncAll.addEventListener("click", () => syncAllItems(syncAll));
+      tools.appendChild(syncAll);
+      accountsEl.replaceChildren(tools, table);
     }
 
     async function refresh() {
-      const [summary, items, accounts, transactions] = await Promise.all([
-        api("/v1/summary"),
-        api("/v1/items"),
-        api("/v1/accounts"),
-        api("/v1/transactions?limit=15"),
-      ]);
-      renderSummary(summary);
-      renderItems(items);
-      renderAccounts(accounts);
-      renderTransactions(transactions);
+      try {
+        await api("/v1/items/health", { method: "POST" });
+      } catch (_err) {
+        // The account list still shows the last connection state we saved.
+      }
+      accounts = await api("/v1/accounts");
+      renderAccounts();
     }
 
-    async function syncItem(id, name) {
-      setStatus("Syncing " + name + "…");
+    async function syncAllItems(button) {
+      const ids = [];
+      for (const account of accounts) {
+        if (!ids.includes(account.item_id)) ids.push(account.item_id);
+      }
+      button.disabled = true;
+      setStatus("Syncing " + ids.length + (ids.length === 1 ? " institution…" : " institutions…"));
       try {
-        const result = await api("/v1/items/" + encodeURIComponent(id) + "/sync", { method: "POST" });
-        const sync = result.sync;
-        setStatus(name + " synced. " + sync.transactions_upserted + " transactions, " + sync.accounts + " accounts.");
+        for (const id of ids) {
+          await api("/v1/items/" + encodeURIComponent(id) + "/sync", { method: "POST" });
+        }
+        setStatus("All accounts synced.");
         await refresh();
       } catch (err) {
         setStatus(err.message);
+        button.disabled = false;
+      }
+    }
+
+    async function reconnect(account, button) {
+      if (account.connection_action === "connect") {
+        await connect();
+        return;
+      }
+      button.disabled = true;
+      try {
+        if (providerName === "mock") {
+          await api("/v1/items/" + encodeURIComponent(account.item_id) + "/sync", { method: "POST" });
+          setStatus(account.name + " reconnected.");
+          await refresh();
+          return;
+        }
+        if (!window.Plaid) {
+          throw new Error("Plaid Link did not load. Check the network and reload the page.");
+        }
+        setStatus("Opening Plaid to reconnect " + account.name + "…");
+        const token = await api("/v1/items/" + encodeURIComponent(account.item_id) + "/link-token", {
+          method: "POST",
+          body: JSON.stringify({ client_user_id: clientUserId() }),
+        });
+        const publicToken = await openLink(token.link_token);
+        if (!publicToken) {
+          setStatus("Reconnect closed before the login was repaired.");
+          button.disabled = false;
+          return;
+        }
+        setStatus("Checking the repaired connection…");
+        await api("/v1/items/" + encodeURIComponent(account.item_id) + "/sync", { method: "POST" });
+        setStatus(account.name + " reconnected.");
+        await refresh();
+      } catch (err) {
+        setStatus(err.message);
+        button.disabled = false;
+      }
+    }
+
+    async function syncItem(id, name, button) {
+      button.disabled = true;
+      setStatus("Syncing " + name + "…");
+      try {
+        await api("/v1/items/" + encodeURIComponent(id) + "/sync", { method: "POST" });
+        setStatus(name + " synced.");
+        await refresh();
+      } catch (err) {
+        setStatus(err.message);
+        button.disabled = false;
       }
     }
 
@@ -417,7 +470,7 @@
           body: JSON.stringify({ public_token: publicToken }),
         });
         const name = result.item.institution_name || "Institution";
-        setStatus(name + " connected. " + result.sync.accounts + " accounts, " + result.sync.transactions_upserted + " transactions.");
+        setStatus(name + " connected.");
         await refresh();
       } catch (err) {
         setStatus(err.message);
@@ -429,7 +482,7 @@
     keyForm.addEventListener("submit", async (event) => {
       event.preventDefault();
       sessionStorage.setItem(KEY, keyInput.value.trim());
-      setStatus("Loading ledger…");
+      setStatus("Loading accounts…");
       try {
         await refresh();
         setStatus("Key saved in this browser tab.");
